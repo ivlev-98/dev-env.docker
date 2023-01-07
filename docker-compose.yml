@@ -1,0 +1,129 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:latest
+    container_name: ${PROJECT_NAME-project}_nginx
+    ports:
+      - 80:80
+    volumes:
+      - ${DOCUMENT_ROOT-./src}:/var/www/html
+      - ./services/nginx/config:/etc/nginx/conf.d
+      - ./services/nginx/logs:/var/log/nginx
+    links:
+      - php
+    depends_on:
+      - php
+    networks:
+      - main_network
+  php:
+    build:
+      context: ./services/php/bin/${PHP_VERSION-8.2}
+      args:
+        uname: ${UNAME-php}
+        uid: ${UID-1000}
+        gid: ${UID-1000}
+    image: php:${PHP_VERSION-8.2}
+    container_name: ${PROJECT_NAME-project}_php
+    volumes:
+      - ${DOCUMENT_ROOT-./src}:/var/www/html
+      - ./services/php/config/php.ini:/usr/local/etc/php/conf.d/php.ini
+      - ./services/php/config/xdebug.ini:/usr/local/etc/php/conf.d/xdebug.ini
+      - composer:/var/www/.composer/cache
+      - ./services/php/xdebug:/var/log/xdebug
+      - ./services/php/logs:/var/log/php
+    links:
+      - db
+      - elasticsearch
+      - redis
+    depends_on:
+      - db
+      - elasticsearch
+      - redis
+      - mailer
+    environment:
+      XDEBUG_CONFIG:
+        client_host=${XDEBUG_REMOTE_HOST-172.18.0.1}
+        client_port=${XDEBUG_PORT-9003}
+        idekey=${XDEBUG_KEY-vsc}
+        mode=${XDEBUG_MODE-develop,coverage,debug,gcstats,profile,trace}
+        remote_handler=dbgp
+        start_with_request=trigger
+    networks:
+      - main_network
+  db:
+    image: mariadb:latest
+    container_name: ${PROJECT_NAME-project}_db
+    restart: 'always'
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - db:/var/lib/mysql
+    environment:
+      MYSQL_DATABASE: db
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+    networks:
+      - main_network
+  mailer:
+      image: mailhog/mailhog
+      container_name: ${PROJECT_NAME-project}_mailer
+      ports:
+          - "127.0.0.1:8082:8025"
+          - "127.0.0.1:1025:1025"
+      networks:
+        - main_network
+  elasticsearch:
+    build:
+      context: ./services/elasticsearch
+      dockerfile: bin/${ELASTICSEARCH_VERSION-8.5}/Dockerfile
+    container_name: ${PROJECT_NAME}_es
+    image: elasticsearch:${ELASTICSEARCH_VERSION-8.5}
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms128m -Xmx1024m"
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=2gb
+      - cluster.routing.allocation.disk.watermark.high=1gb
+      - cluster.routing.allocation.disk.watermark.flood_stage=512mb
+      - bootstrap.memory_lock=false
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es:/usr/share/elasticsearch/data
+      - ./services/elasticsearch/logs:/usr/share/elasticsearch/logs
+    ports:
+      - "127.0.0.1:9200:9200"
+    networks:
+      - main_network
+  redis:
+    image: redis:latest
+    container_name: ${PROJECT_NAME-project}_redis
+    volumes:
+      - redis:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - main_network
+volumes:
+  composer:
+  db:
+  es:
+  redis:
+networks:
+  main_network:
+    driver: bridge
+    name: ${PROJECT_NAME-project}_main_network
+    ipam:
+      driver: default
+      config:
+        - subnet: ${SUBNET_IP-172.18.0.0}/${SUBNET_MASK-28}
